@@ -39,12 +39,11 @@ Dashboard, create a new Blueprint from this GitHub repository and approve the
 service settings. Render will build and deploy the app and redeploy on pushes
 to `main`.
 
-If the frontend is hosted separately on Vercel, deploy the Render service
-first, then add `VITE_CHAT_SERVER_URL` to the Vercel project's environment
-variables. Set it to the Render service origin, for example
-`https://react-chat-app.onrender.com` (without a trailing slash), and redeploy
-the Vercel project. Vercel's static frontend does not provide the Express API
-or persistent Socket.IO server needed to deliver chat messages.
+If the frontend is hosted separately on Vercel, set `VITE_CHAT_SERVER_URL` to
+the Render service origin when it differs from the default configured in
+`src/hooks/useSocketChat.js`, then redeploy the Vercel project. Vercel's static
+frontend does not provide the Express API or persistent Socket.IO server
+needed to deliver chat messages.
 
 The server stores messages in memory, so messages are cleared when the server
 restarts.

@@ -3,7 +3,9 @@ import { io } from 'socket.io-client';
 import { USER_LIST } from '../constants.js';
 import { extractMentions } from '../utils/mentions.js';
 
-const CHAT_SERVER_URL = (import.meta.env.VITE_CHAT_SERVER_URL || '').replace(/\/+$/, '');
+const CHAT_SERVER_URL = (
+  import.meta.env.VITE_CHAT_SERVER_URL || 'https://react-chat-app-ecl7.onrender.com'
+).replace(/\/+$/, '');
 
 function apiUrl(path) {
   return `${CHAT_SERVER_URL}${path}`;
