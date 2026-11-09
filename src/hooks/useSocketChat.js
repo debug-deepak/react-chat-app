@@ -3,6 +3,12 @@ import { io } from 'socket.io-client';
 import { USER_LIST } from '../constants.js';
 import { extractMentions } from '../utils/mentions.js';
 
+const CHAT_SERVER_URL = (import.meta.env.VITE_CHAT_SERVER_URL || '').replace(/\/+$/, '');
+
+function apiUrl(path) {
+  return `${CHAT_SERVER_URL}${path}`;
+}
+
 // Helper to deduplicate messages by id
 function deduplicateMessages(list) {
   const seen = new Set();
@@ -16,6 +22,12 @@ function deduplicateMessages(list) {
   return result;
 }
 
+function pickRandomUser(excludeUser = null) {
+  const pool = USER_LIST.filter((user) => user !== excludeUser);
+  const candidates = pool.length > 0 ? pool : USER_LIST;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
 export function useSocketChat(currentChannelId = 'introductions') {
   const [messages, setMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -23,10 +35,11 @@ export function useSocketChat(currentChannelId = 'introductions') {
   const [typingUsers, setTypingUsers] = useState([]);
   const socketRef = useRef(null);
   const typingTimeoutRef = useRef({});
+  const lastRandomUserRef = useRef(null);
 
   useEffect(() => {
-    // Connect to current origin with Socket.IO
-    const socket = io({
+    // Use the configured backend origin, or the current origin for local/Render hosting.
+    const socket = io(CHAT_SERVER_URL || undefined, {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
@@ -111,8 +124,11 @@ export function useSocketChat(currentChannelId = 'introductions') {
     });
 
     // Fallback: Fetch messages via REST
-    fetch('/api/messages')
-      .then((res) => (res.ok ? res.json() : null))
+    fetch(apiUrl('/api/messages'))
+      .then((res) => {
+        if (!res.ok) throw new Error(`Unable to load messages (${res.status})`);
+        return res.json();
+      })
       .then((data) => {
         if (data?.success && Array.isArray(data.messages)) {
           setMessages((current) => {
@@ -121,7 +137,7 @@ export function useSocketChat(currentChannelId = 'introductions') {
           });
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error('Failed to load messages:', err));
 
     return () => {
       socket.disconnect();
@@ -137,7 +153,8 @@ export function useSocketChat(currentChannelId = 'introductions') {
       if (!text) return;
 
       const assignedUser =
-        manualUser || USER_LIST[Math.floor(Math.random() * USER_LIST.length)];
+        manualUser || pickRandomUser(lastRandomUserRef.current);
+      lastRandomUserRef.current = assignedUser;
 
       const now = new Date();
       const hours = now.getHours().toString().padStart(2, '0');
@@ -161,36 +178,64 @@ export function useSocketChat(currentChannelId = 'introductions') {
       // Optimistic local update
       setMessages((prev) => [...prev, optimisticMessage]);
 
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('chat:send', {
-          id: tempId,
-          text,
-          user: assignedUser,
-          channelId,
-          mentions,
+      const payload = {
+        id: tempId,
+        text,
+        user: assignedUser,
+        channelId,
+        mentions,
+      };
+
+      const confirmMessage = (message) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempId ? { ...message, isOptimistic: false } : m
+          )
+        );
+      };
+
+      const sendOverSocket = () =>
+        new Promise((resolve, reject) => {
+          socketRef.current
+            .timeout(8000)
+            .emit('chat:send', payload, (error, result) => {
+              if (error) {
+                reject(new Error('The chat server did not confirm the message.'));
+              } else if (!result?.success || !result.message) {
+                reject(new Error(result?.error || 'The chat server rejected the message.'));
+              } else {
+                resolve(result.message);
+              }
+            });
         });
-      } else {
-        fetch('/api/messages', {
+
+      const sendOverHttp = async () => {
+        const response = await fetch(apiUrl('/api/messages'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: tempId,
-            text,
-            user: assignedUser,
-            channelId,
-            mentions,
-          }),
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error(`Chat server is unavailable (HTTP ${response.status}).`);
+        }
+        const result = await response.json();
+        if (!result?.success || !result.message) {
+          throw new Error(result?.error || `Unable to send message (${response.status})`);
+        }
+        return result.message;
+      };
+
+      const socket = socketRef.current;
+      const sendRequest = socket?.connected ? sendOverSocket() : sendOverHttp();
+      return sendRequest
+        .then((message) => {
+          confirmMessage(message);
+          return true;
         })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data?.message) {
-              setMessages((prev) =>
-                prev.map((m) => (m.id === tempId ? { ...data.message, isOptimistic: false } : m))
-              );
-            }
-          })
-          .catch((err) => console.error('Failed to post message:', err));
-      }
+        .catch((error) => {
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          throw error;
+        });
     },
     [currentChannelId]
   );
@@ -206,7 +251,7 @@ export function useSocketChat(currentChannelId = 'introductions') {
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('chat:like', { messageId });
     } else {
-      fetch(`/api/messages/${messageId}/like`, { method: 'POST' }).catch((err) =>
+      fetch(apiUrl(`/api/messages/${messageId}/like`), { method: 'POST' }).catch((err) =>
         console.error('Failed to like message:', err)
       );
     }
@@ -233,15 +278,20 @@ export function useSocketChat(currentChannelId = 'introductions') {
         typeof customText === 'string' && customText.trim()
           ? customText.trim()
           : sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
-      const randomUser = USER_LIST[Math.floor(Math.random() * USER_LIST.length)];
-      sendMessage(validText, randomUser, currentChannelId);
+      const randomUser = pickRandomUser(lastRandomUserRef.current);
+      lastRandomUserRef.current = randomUser;
+      sendMessage(validText, randomUser, currentChannelId).catch((err) =>
+        console.error('Failed to simulate incoming message:', err)
+      );
     },
     [currentChannelId, sendMessage]
   );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
-    fetch('/api/messages/clear', { method: 'POST' }).catch(() => {});
+    fetch(apiUrl('/api/messages/clear'), { method: 'POST' }).catch((err) =>
+      console.error('Failed to clear messages:', err)
+    );
   }, []);
 
   return {

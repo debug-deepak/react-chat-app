@@ -12,6 +12,8 @@ export function ChatInput({ onSendMessage, onTyping }) {
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [selectedUserMode, setSelectedUserMode] = useState('random');
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const inputRef = useRef(null);
   const typingTimerRef = useRef(null);
 
@@ -22,6 +24,7 @@ export function ChatInput({ onSendMessage, onTyping }) {
   const handleInputChange = (e) => {
     const value = e.target.value;
     setText(value);
+    setSendError('');
 
     // Typing status
     if (onTyping) {
@@ -126,23 +129,27 @@ export function ChatInput({ onSendMessage, onTyping }) {
     }
   };
 
-  const handleSend = () => {
-    if (!text.trim()) return;
+  const handleSend = async () => {
+    if (!text.trim() || isSending) return;
 
     const userToAssign = selectedUserMode === 'random' ? undefined : selectedUserMode;
     const allMentions = extractMentions(text);
 
-    onSendMessage(text, userToAssign, allMentions);
-    setText('');
-    setIsMentionOpen(false);
-    setIsEmojiPickerOpen(false);
-
-    if (onTyping) {
-      onTyping(false);
+    setIsSending(true);
+    setSendError('');
+    try {
+      await onSendMessage(text, userToAssign, allMentions);
+      setText('');
+      setIsMentionOpen(false);
+      setIsEmojiPickerOpen(false);
+      if (onTyping) onTyping(false);
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      inputRef.current?.focus();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Message could not be sent.');
+    } finally {
+      setIsSending(false);
     }
-
-    inputRef.current?.focus();
   };
 
   const triggerMentionExplicitly = () => {
@@ -232,6 +239,7 @@ export function ChatInput({ onSendMessage, onTyping }) {
             value={text}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            disabled={isSending}
             placeholder="Type a message... (use @ to mention users, or click 😊)"
             className="flex-1 bg-transparent px-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden"
           />
@@ -256,13 +264,18 @@ export function ChatInput({ onSendMessage, onTyping }) {
         <button
           type="button"
           onClick={handleSend}
-          disabled={!text.trim()}
+          disabled={!text.trim() || isSending}
           className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium shadow-sm hover:shadow-md transition-all cursor-pointer shrink-0"
         >
           <Send className="w-4 h-4" />
           <span className="hidden sm:inline">Send</span>
         </button>
       </div>
+      {sendError && (
+        <p role="alert" className="mt-2 px-2 text-sm text-red-600">
+          Message not sent: {sendError}
+        </p>
+      )}
     </div>
   );
 }

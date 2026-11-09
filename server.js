@@ -11,6 +11,16 @@ const PORT = Number(process.env.PORT) || 3000;
 
 export const USER_LIST = ['Alan', 'Bob', 'Carol', 'Dean', 'Elin'];
 
+let lastRandomUser = null;
+
+function pickRandomUser(excludeUser = null) {
+  const pool = USER_LIST.filter((user) => user !== excludeUser);
+  const candidates = pool.length > 0 ? pool : USER_LIST;
+  const nextUser = candidates[Math.floor(Math.random() * candidates.length)];
+  lastRandomUser = nextUser;
+  return nextUser;
+}
+
 function extractMentions(text, explicitMentions = []) {
   const result = [];
   const lowerSeen = new Set();
@@ -42,6 +52,13 @@ function extractMentions(text, explicitMentions = []) {
 let messages = [];
 
 const app = express();
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json());
 
 const httpServer = createServer(app);
@@ -62,8 +79,11 @@ io.on('connection', (socket) => {
   // Send current message history on connection
   socket.emit('chat:init', messages);
 
-  socket.on('chat:send', (payload) => {
-    if (!payload || !payload.text || !payload.text.trim()) return;
+  socket.on('chat:send', (payload, acknowledge) => {
+    if (!payload || typeof payload.text !== 'string' || !payload.text.trim()) {
+      acknowledge?.({ success: false, error: 'Message text is required' });
+      return;
+    }
 
     // Preserve client-provided ID to keep optimistic update synchronized without duplicates
     const messageId =
@@ -72,11 +92,14 @@ io.on('connection', (socket) => {
         : `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     // Guard against duplicate processing
-    if (messages.some((m) => m.id === messageId)) return;
+    const existing = messages.find((m) => m.id === messageId);
+    if (existing) {
+      acknowledge?.({ success: true, message: existing });
+      return;
+    }
 
-    // Pick random username from required user_list if not specified
-    const assignedUser =
-      payload.user || USER_LIST[Math.floor(Math.random() * USER_LIST.length)];
+    // Pick a different random username from the user list when a sender is not specified.
+    const assignedUser = payload.user || pickRandomUser(lastRandomUser);
 
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
@@ -102,6 +125,7 @@ io.on('connection', (socket) => {
 
     // Broadcast to all connected clients in real time
     io.emit('chat:message', newMessage);
+    acknowledge?.({ success: true, message: newMessage });
   });
 
   socket.on('chat:like', (payload) => {
@@ -145,7 +169,7 @@ app.post('/api/messages', (req, res) => {
     return res.json({ success: true, message: existing });
   }
 
-  const assignedUser = user || USER_LIST[Math.floor(Math.random() * USER_LIST.length)];
+  const assignedUser = user || pickRandomUser(lastRandomUser);
   const now = new Date();
   const hours = now.getHours().toString().padStart(2, '0');
   const minutes = now.getMinutes().toString().padStart(2, '0');
