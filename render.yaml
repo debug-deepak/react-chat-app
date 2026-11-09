@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: react-chat-app
+    runtime: node
+    plan: free
+    buildCommand: bun install --frozen-lockfile && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/users
+    envVars:
+      - key: NODE_ENV
+        value: production

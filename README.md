@@ -32,5 +32,12 @@ npm start
 
 On macOS or Linux, use `NODE_ENV=production npm start`.
 
+## Deploy to Render
+
+The included `render.yaml` configures a free Render web service. In the Render
+Dashboard, create a new Blueprint from this GitHub repository and approve the
+service settings. Render will build and deploy the app and redeploy on pushes
+to `main`.
+
 The server stores messages in memory, so messages are cleared when the server
 restarts.
