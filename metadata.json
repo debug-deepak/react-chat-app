@@ -1,0 +1,5 @@
+{
+  "name": "React Team Chat",
+  "description": "Real-time team chat application with randomized sender assignment, like reactions, emoji support, @user mentions, and live multi-client synchronization.",
+  "requestFramePermissions": []
+}
